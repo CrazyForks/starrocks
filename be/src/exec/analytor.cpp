@@ -356,6 +356,9 @@ Status Analytor::open(RuntimeState* state) {
         }
         AggDataPtr agg_states = _mem_pool->allocate_aligned(_agg_states_total_size, _max_agg_state_align_size);
         SCOPED_THREAD_LOCAL_AGG_STATE_ALLOCATOR_SETTER(_allocator.get());
+        for (int i = 0; i < _agg_functions.size(); i++) {
+            _agg_functions[i]->create(_agg_fn_ctxs[i], agg_states + _agg_states_offsets[i]);
+        }
         _managed_fn_states.emplace_back(
                 std::make_unique<ManagedFunctionStates<Analytor>>(&_agg_fn_ctxs, agg_states, this));
         return Status::OK();
@@ -390,6 +393,10 @@ void Analytor::close(RuntimeState* state) {
         // Note: we must free agg_states before _mem_pool free_all;
         {
             SCOPED_THREAD_LOCAL_AGG_STATE_ALLOCATOR_SETTER(_allocator.get());
+            auto agg_states = static_cast<AggDataPtr>(_managed_fn_states[0]->mutable_data());
+            for (int i = 0; i < _agg_functions.size(); i++) {
+                _agg_functions[i]->destroy(_agg_fn_ctxs[i], agg_states + _agg_states_offsets[i]);
+            }
             _managed_fn_states.clear();
             _managed_fn_states.shrink_to_fit();
         }
@@ -1053,12 +1060,14 @@ void Analytor::_init_window_result_columns() {
                 ColumnHelper::create_column(_agg_fn_types[i].result_type, _agg_fn_types[i].has_nullable_child);
         // Binary column cound't call resize method like Numeric Column,
         // so we only reserve it.
-        if (_agg_fn_types[i].result_type.type == LogicalType::TYPE_CHAR ||
-            _agg_fn_types[i].result_type.type == LogicalType::TYPE_VARCHAR ||
-            _agg_fn_types[i].result_type.type == LogicalType::TYPE_JSON ||
-            _agg_fn_types[i].result_type.type == LogicalType::TYPE_ARRAY ||
-            _agg_fn_types[i].result_type.type == LogicalType::TYPE_MAP ||
-            _agg_fn_types[i].result_type.type == LogicalType::TYPE_STRUCT) {
+        if (_agg_functions[i]->get_name().ends_with("fused_multi_distinct")) {
+            _result_window_columns[i]->resize(chunk_size);
+        } else if (_agg_fn_types[i].result_type.type == LogicalType::TYPE_CHAR ||
+                   _agg_fn_types[i].result_type.type == LogicalType::TYPE_VARCHAR ||
+                   _agg_fn_types[i].result_type.type == LogicalType::TYPE_JSON ||
+                   _agg_fn_types[i].result_type.type == LogicalType::TYPE_ARRAY ||
+                   _agg_fn_types[i].result_type.type == LogicalType::TYPE_MAP ||
+                   _agg_fn_types[i].result_type.type == LogicalType::TYPE_STRUCT) {
             _result_window_columns[i]->reserve(chunk_size);
         } else {
             _result_window_columns[i]->resize(chunk_size);
