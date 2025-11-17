@@ -1396,7 +1396,8 @@ public class StmtExecutor {
     // Process refresh connections statement.
     private void handleRefreshConnectionsStmt() {
         try {
-            GlobalStateMgr.getCurrentState().getVariableMgr().refreshConnections();
+            RefreshConnectionsStmt stmt = (RefreshConnectionsStmt) parsedStmt;
+            GlobalStateMgr.getCurrentState().getVariableMgr().refreshConnections(stmt.isForce());
         } catch (Exception e) {
             context.getState().setError(e.getMessage());
             return;
